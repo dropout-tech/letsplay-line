@@ -1,476 +1,561 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 import {
-  mockLineUser,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  User,
+  MessageCircle,
+  Clock,
+  ChartColumn,
+  MapPin,
+} from "lucide-react";
+import {
   mockStudents,
   mockEnrollments,
   mockSessions,
   mockAttendance,
-  Student,
+  AttendanceStatus,
   Session,
-  Attendance,
 } from "./mock-data";
-
-import { useLiff } from "../providers/liff-provider";
 import { LeaveModal } from "./components/leave-modal";
+import { cn } from "@/lib/utils";
+
+// Adapter types for UI
+interface UIStats {
+  courseName: string;
+  attended: number;
+  remaining: number;
+  total: number;
+  expiryDate: string;
+}
+
+interface UIAttendance {
+  id: string; // session id or attendance id
+  date: string;
+  time: string;
+  courseName: string;
+  status: AttendanceStatus | "SCHEDULED" | "COMPLETED"; // Expanded status
+}
 
 export default function MyCoursePage() {
-  const { profile, liffError, login, liff } = useLiff();
-  const [selectedStudentId, setSelectedStudentId] = useState<string>(
-    mockStudents[0].id
-  );
+  const [currentStudentId, setCurrentStudentId] = useState(mockStudents[0].id);
+  const [selectedDate, setSelectedDate] = useState(new Date());
 
-  // State for Leave Modal
+  // Leave Modal State
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
-  const [selectedLeaveSession, setSelectedLeaveSession] = useState<{
-    id: string;
-    classId: string;
-    date: string;
-    startTime: string;
-    endTime: string;
-    className: string;
-    displayStatus: string;
-  } | null>(null);
-
-  // Local state for Attendance to simulate updates (until backend)
-  const [localAttendance, setLocalAttendance] =
-    useState<Attendance[]>(mockAttendance);
-
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-
-  // 1. Filter Data for Selected Student
-  const selectedStudent = useMemo(
-    () =>
-      mockStudents.find((s) => s.id === selectedStudentId) || mockStudents[0],
-    [selectedStudentId]
+  const [selectedSession, setSelectedSession] = useState<UIAttendance | null>(
+    null
   );
 
-  // Find all enrollments for this student
-  const studentEnrollments = useMemo(
-    () => mockEnrollments.filter((e) => e.studentId === selectedStudentId),
-    [selectedStudentId]
+  // Derived Data
+  const student =
+    mockStudents.find((s) => s.id === currentStudentId) || mockStudents[0];
+
+  // 1. Derive Stats from Enrollments
+  const stats: UIStats[] = mockEnrollments
+    .filter((e) => e.studentId === currentStudentId)
+    .map((e) => ({
+      courseName: e.className,
+      attended: e.attendedCredits,
+      remaining: e.remainingCredits,
+      total: e.totalCredits,
+      expiryDate: e.expiryDate,
+    }));
+
+  // 2. Derive Calendar Sessions
+  // Get all class IDs for this student
+  const studentClassIds = mockEnrollments
+    .filter((e) => e.studentId === currentStudentId)
+    .map((e) => e.classId);
+
+  // Find all sessions for these classes
+  const relevantSessions = mockSessions.filter((s) =>
+    studentClassIds.includes(s.classId)
   );
 
-  // 2. Combine Session + Attendance
-  const filledSessions = useMemo(() => {
-    if (studentEnrollments.length === 0) return [];
-
-    const enrolledClassIds = studentEnrollments.map((e) => e.classId);
-
-    // Get sessions for all enrolled classes
-    const relevantSessions = mockSessions.filter((s) =>
-      enrolledClassIds.includes(s.classId)
+  // Merge with Attendance records
+  const attendanceList: UIAttendance[] = relevantSessions.map((session) => {
+    const attendanceRecord = mockAttendance.find(
+      (a) => a.sessionId === session.id && a.studentId === currentStudentId
     );
 
-    return relevantSessions.map((session) => {
-      // Use LOCAL attendance state
-      const attendance = localAttendance.find(
-        (a) => a.sessionId === session.id && a.studentId === selectedStudentId
-      );
+    // Determine status:
+    // If attendance record exists, use that status (PRESENT, ABSENT, LEAVE)
+    // If not, check session status (SCHEDULED, COMPLETED)
+    // Or check if it's in the past/future
+    let status: any = attendanceRecord
+      ? attendanceRecord.status
+      : session.status;
 
-      // Find class name from enrollments
-      const enrollment = studentEnrollments.find(
-        (e) => e.classId === session.classId
-      );
-      const className = enrollment?.className || "Unknown Class";
-
-      let displayStatus:
-        | "PRESENT"
-        | "ABSENT"
-        | "LEAVE"
-        | "SCHEDULED"
-        | "CANCELLED"
-        | "UNRECORDED" = "SCHEDULED";
-
-      if (attendance) {
-        displayStatus = attendance.status;
-      } else if (session.status === "CANCELLED") {
-        displayStatus = "CANCELLED";
+    // Override 'COMPLETED' with 'ABSENT' or 'UNRECORDED' if no attendance record exists?
+    // Spec says: "Course Calendar... Present(Green), Absent(Red), Scheduled(Blue), Leave(Orange)"
+    if (!attendanceRecord && session.status === "COMPLETED") {
+      // If it's completed but no record, maybe it implies Absent or just hasn't been input yet?
+      // For now, let's leave it as COMPLETED or map to SCHEDULED logic for simplicity if date is future
+      const sessionDate = new Date(session.date);
+      const today = new Date();
+      if (sessionDate < today) {
+        status = "ABSENT"; // Assume absent if completed and no record
       } else {
-        displayStatus = "SCHEDULED";
+        status = "SCHEDULED";
       }
-
-      return {
-        ...session,
-        attendance,
-        displayStatus,
-        className,
-      };
-    });
-  }, [selectedStudentId, studentEnrollments, localAttendance]); // Dep on localAttendance
-
-  // 3. Agenda Data
-  const agendaSessions = useMemo(() => {
-    const now = new Date();
-    const startOfToday = new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate()
-    );
-    const endRange = new Date(startOfToday);
-    endRange.setDate(startOfToday.getDate() + 14);
-
-    return filledSessions
-      .filter((s) => {
-        const sDate = new Date(s.date);
-        return sDate >= startOfToday && sDate <= endRange;
-      })
-      .sort((a, b) => {
-        const dateA = new Date(`${a.date}T${a.startTime}`);
-        const dateB = new Date(`${b.date}T${b.startTime}`);
-        return dateA.getTime() - dateB.getTime();
-      });
-  }, [filledSessions]);
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      // ... (same as before)
-      case "PRESENT":
-        return "bg-green-100 text-green-800 border-green-200";
-      case "ABSENT":
-        return "bg-red-100 text-red-800 border-red-200";
-      case "LEAVE":
-        return "bg-orange-100 text-orange-800 border-orange-200";
-      case "SCHEDULED":
-        return "bg-blue-100 text-blue-800 border-blue-200";
-      case "CANCELLED":
-        return "bg-gray-100 text-gray-800 border-gray-200";
-      default:
-        return "bg-gray-50 text-gray-600 border-gray-200";
     }
-  };
 
-  const handleMonthChange = (offset: number) => {
-    const newDate = new Date(currentMonth);
-    newDate.setMonth(newDate.getMonth() + offset);
-    setCurrentMonth(newDate);
-  };
-
-  const daysInMonth = useMemo(() => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    const date = new Date(year, month, 1);
-    const days = [];
-    while (date.getMonth() === month) {
-      days.push(new Date(date));
-      date.setDate(date.getDate() + 1);
-    }
-    return days;
-  }, [currentMonth]);
-
-  // Handle Session Click
-  const handleSessionClick = (session: any) => {
-    // Only allow leave if SCHEDULED (Blue)
-    if (
-      session.displayStatus === "SCHEDULED" ||
-      session.displayStatus === "UNRECORDED"
-    ) {
-      setSelectedLeaveSession(session);
-      setIsLeaveModalOpen(true);
-    }
-  };
-
-  // Handle Confirm Leave
-  const handleConfirmLeave = () => {
-    if (!selectedLeaveSession) return;
-
-    // Update Local State: Add a new Attendance record with status 'LEAVE'
-    const newAttendance: Attendance = {
-      id: `new_leave_${Date.now()}`,
-      sessionId: selectedLeaveSession.id,
-      studentId: selectedStudentId,
-      status: "LEAVE",
-      creditsUsed: 1, // Deduct credit? Rule says yes usually
-      isMakeup: false,
+    return {
+      id: session.id,
+      date: session.date,
+      time: `${session.startTime}-${session.endTime}`,
+      courseName:
+        mockEnrollments.find((e) => e.classId === session.classId)?.className ||
+        "Unknown Class",
+      status: status,
     };
+  });
 
-    setLocalAttendance((prev) => [...prev, newAttendance]);
+  // Handlers
+  const handleLeaveClick = (session: UIAttendance) => {
+    setSelectedSession(session);
+    setIsLeaveModalOpen(true);
+  };
 
-    // Clear modal
-    setSelectedLeaveSession(null);
+  const confirmLeave = () => {
+    if (selectedSession) {
+      alert(`Leave application submitted for ${selectedSession.date}`);
+      setIsLeaveModalOpen(false);
+      setSelectedSession(null);
+    }
+  };
+
+  // Calendar Logic
+  const getDaysInMonth = (date: Date) => {
+    const year = date.getFullYear();
+    const month = date.getMonth();
+    const days = new Date(year, month + 1, 0).getDate();
+    return Array.from({ length: days }, (_, i) => new Date(year, month, i + 1));
+  };
+
+  const daysInMonth = getDaysInMonth(selectedDate);
+  const firstDayOfMonth = new Date(
+    selectedDate.getFullYear(),
+    selectedDate.getMonth(),
+    1
+  ).getDay();
+
+  // Helper to get session for a specific date
+  const getSessionForDate = (date: Date) => {
+    const year = date.getFullYear();
+    const month = (date.getMonth() + 1).toString().padStart(2, "0");
+    const day = date.getDate().toString().padStart(2, "0");
+    const dateStr = `${year}-${month}-${day}`;
+    return attendanceList.find((a) => a.date === dateStr);
+  };
+
+  const getStatusColor = (status: string | undefined) => {
+    switch (status) {
+      case "PRESENT":
+        return "bg-green-500";
+      case "ABSENT":
+        return "bg-red-500";
+      case "SCHEDULED":
+        return "bg-blue-500";
+      case "LEAVE":
+        return "bg-orange-500";
+      default:
+        return "bg-white";
+    }
+  };
+
+  const getStatusBorderColor = (status: string) => {
+    switch (status) {
+      case "PRESENT":
+        return "border-l-green-500";
+      case "ABSENT":
+        return "border-l-red-500";
+      case "SCHEDULED":
+        return "border-l-blue-500";
+      case "LEAVE":
+        return "border-l-orange-500";
+      default:
+        return "border-l-gray-300";
+    }
+  };
+
+  const getStatusBadgeVariant = (
+    status: string
+  ): "default" | "secondary" | "destructive" | "outline" => {
+    switch (status) {
+      case "PRESENT":
+        return "outline";
+      case "SCHEDULED":
+        return "default";
+      default:
+        return "secondary";
+    }
+  };
+
+  // Helper functions for localization
+  const getMembershipLabel = (tier: string) => {
+    switch (tier) {
+      case "DIAMOND":
+        return "鑽石會員";
+      case "GOLD":
+        return "黃金會員";
+      case "SILVER":
+        return "白銀會員";
+      default:
+        return "非會員";
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case "PRESENT":
+        return "已出席";
+      case "ABSENT":
+        return "缺席";
+      case "LEAVE":
+        return "請假";
+      case "SCHEDULED":
+        return "未開始";
+      case "COMPLETED":
+        return "已結束";
+      default:
+        return status;
+    }
+  };
+
+  const getLevelLabel = (level: string) => {
+    // ... existing code ...
+    switch (level) {
+      case "Beginner":
+        return "初學";
+      case "Intermediate":
+        return "中階";
+      case "Advanced":
+        return "進階";
+      default:
+        return level;
+    }
+  };
+
+  const getMembershipColor = (tier: string) => {
+    switch (tier) {
+      case "DIAMOND":
+        return "bg-cyan-500 hover:bg-cyan-600";
+      case "GOLD":
+        return "bg-yellow-500 hover:bg-yellow-600";
+      case "SILVER":
+        return "bg-slate-400 hover:bg-slate-500";
+      default:
+        return "bg-slate-200 text-slate-700 hover:bg-slate-300";
+    }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}
-      <header className="bg-white px-4 py-4 shadow-sm sticky top-0 z-10 flex justify-between items-center">
-        <h1 className="text-xl font-bold text-gray-800">我的課程</h1>
-        <div className="text-sm text-gray-500">
-          Hi, {profile?.displayName || mockLineUser.displayName}
-          {/* ... */}
-        </div>
-      </header>
-
-      <main className="p-4 space-y-6">
-        {/* Student Switcher */}
-        {mockStudents.length > 1 && (
-          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-            {/* ... (unchanged) */}
-            {mockStudents.map((student) => (
-              <button
-                key={student.id}
-                onClick={() => setSelectedStudentId(student.id)}
-                className={`flex-shrink-0 px-4 py-2 rounded-full text-sm font-medium transition-colors ${
-                  selectedStudentId === student.id
-                    ? "bg-blue-600 text-white shadow-md"
-                    : "bg-white text-gray-600 border border-gray-200 hover:bg-gray-50"
-                }`}
-              >
-                {student.name}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* Member Info ... (unchanged) */}
-        <section className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-          {/* ... */}
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h2 className="text-2xl font-bold text-gray-900">
-                {selectedStudent.name}
-              </h2>
-            </div>
-            <div className="px-3 py-1 bg-blue-50 text-blue-600 text-xs font-semibold rounded-full">
-              {selectedStudent.level}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <div className="flex flex-col">
-              <span className="text-gray-400">學員生日</span>
-              <span className="font-medium text-gray-700">
-                {selectedStudent.birthday}
-              </span>
-            </div>
-            <div className="flex flex-col">
-              <span className="text-gray-400">連絡電話</span>
-              <span className="font-medium text-gray-700">
-                {selectedStudent.phone}
-              </span>
-            </div>
-          </div>
-        </section>
-
-        {/* Enrolled Courses List */}
-        <section className="space-y-3">
-          <h3 className="font-bold text-gray-800 px-1">
-            目前課程 ({studentEnrollments.length})
-          </h3>
-          {studentEnrollments.map((enrollment) => (
-            <div
-              key={enrollment.id}
-              className="bg-white rounded-xl p-4 shadow-sm border border-gray-100"
+      <div className="bg-white p-4 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
+        <h1 className="text-xl font-bold">我的課程</h1>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {mockStudents.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => setCurrentStudentId(s.id)}
+              className={cn(
+                "px-4 py-2 rounded-full border text-sm font-medium whitespace-nowrap transition-all",
+                currentStudentId === s.id
+                  ? "border-primary bg-primary text-primary-foreground shadow-md"
+                  : "border-muted-foreground/30 bg-white text-muted-foreground hover:bg-gray-50"
+              )}
             >
-              {/* ... (unchanged) */}
-              <div className="mb-2">
-                <h4 className="font-semibold text-gray-900 text-sm">
-                  {enrollment.className}
-                </h4>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  到期日: {enrollment.expiryDate}
-                </p>
-              </div>
-              <div className="grid grid-cols-3 gap-2 border-t border-gray-50 pt-3">
-                <div className="text-center">
-                  <div className="text-xs text-gray-400">已上</div>
-                  <div className="font-bold text-green-600">
-                    {enrollment.attendedCredits}
-                  </div>
-                </div>
-                <div className="text-center border-l border-gray-100">
-                  <div className="text-xs text-gray-400">剩餘</div>
-                  <div className="font-bold text-blue-600">
-                    {enrollment.remainingCredits}
-                  </div>
-                </div>
-                <div className="text-center border-l border-gray-100">
-                  <div className="text-xs text-gray-400">總堂數</div>
-                  <div className="font-bold text-gray-600">
-                    {enrollment.totalCredits}
-                  </div>
-                </div>
-              </div>
-            </div>
+              {s.name}
+            </button>
           ))}
-        </section>
+        </div>
+      </div>
 
-        {/* Agenda View */}
-        <section className="space-y-3">
-          <h3 className="font-bold text-gray-800 px-1">近期課程 (兩週內)</h3>
-          {agendaSessions.length === 0 ? (
-            <div className="text-center py-6 bg-white rounded-xl text-gray-400 text-sm">
-              近期無課程
+      <div className="p-4 space-y-6">
+        {/* Member Info Card */}
+        <Card className="border-none shadow-md bg-white text-slate-800 overflow-hidden relative">
+          <CardContent className="p-6 relative">
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight">
+                    {student.name}
+
+                    <Badge
+                      variant="secondary"
+                      className="mx-4 px-3 py-1 text-sm bg-indigo-100 text-indigo-700 hover:bg-indigo-200 border-none"
+                    >
+                      {getLevelLabel(student.level)}
+                    </Badge>
+                    <Badge
+                      className={cn(
+                        "px-3 py-1 text-sm border-none shadow-none text-white",
+                        getMembershipColor(student.membership_tier)
+                      )}
+                    >
+                      {getMembershipLabel(student.membership_tier)}
+                    </Badge>
+                  </h2>
+                </div>
+              </div>
             </div>
-          ) : (
-            <div className="space-y-3">
-              {agendaSessions.map((session) => (
-                <div
-                  key={session.id}
-                  onClick={() => handleSessionClick(session)} // Add click handler
-                  className={`rounded-xl p-4 border flex items-center justify-between shadow-sm cursor-pointer transition-transform active:scale-[0.98] ${getStatusColor(
-                    session.displayStatus
-                  )}`}
-                >
-                  <div>
-                    <h4 className="font-bold text-sm mb-1">
-                      {session.className}
-                    </h4>
-                    <div className="text-xs opacity-80 flex items-center gap-2">
+          </CardContent>
+        </Card>
+
+        {/* Stats Section */}
+        <div className="space-y-3">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <ChartColumn className="w-5 h-5" /> 堂數統計
+          </h3>
+          {stats.map((stat, idx) => (
+            <Card key={idx} className="shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-base">{stat.courseName}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="flex justify-between text-center items-center">
+                  <div className="flex-1">
+                    <p className="text-3xl font-bold text-green-600">
+                      {stat.attended}
+                    </p>
+                    <p className="text-xs text-muted-foreground">已上</p>
+                  </div>
+                  <Separator orientation="vertical" className="h-10" />
+                  <div className="flex-1">
+                    <p className="text-3xl font-bold text-blue-600">
+                      {stat.remaining}
+                    </p>
+                    <p className="text-xs text-muted-foreground">剩餘</p>
+                  </div>
+                  <Separator orientation="vertical" className="h-10" />
+                  <div className="flex-1">
+                    <p className="text-3xl font-bold text-gray-500">
+                      {stat.total}
+                    </p>
+                    <p className="text-xs text-muted-foreground">總堂數</p>
+                  </div>
+                </div>
+
+                <div className="text-xs text-muted-foreground font-normal mt-3 text-right">
+                  使用期限: {stat.expiryDate}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {/* Agenda Section */}
+        <div className="space-y-3">
+          <h3 className="text-lg font-bold flex items-center gap-2">
+            <Clock className="w-5 h-5" /> 近期課程
+          </h3>
+          {/* Filter sessions for This Week Mon to Next Week Sun */}
+          {attendanceList
+            .filter((s) => {
+              const sDate = new Date(s.date);
+
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const dayOfWeek = today.getDay(); // 0(Sun) - 6(Sat)
+
+              // Calculate this week's Monday
+              const diffToMon = (dayOfWeek + 6) % 7;
+              const thisMon = new Date(today);
+              thisMon.setDate(today.getDate() - diffToMon);
+
+              // Calculate next week's Sunday (This Mon + 13 days)
+              const nextSun = new Date(thisMon);
+              nextSun.setDate(thisMon.getDate() + 13);
+              nextSun.setHours(23, 59, 59, 999);
+
+              return sDate >= thisMon && sDate <= nextSun;
+            })
+            .sort(
+              (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
+            )
+            .map((session) => (
+              <Card
+                key={session.id}
+                className={cn(
+                  "border-l-4 shadow-sm",
+                  getStatusBorderColor(session.status)
+                )}
+              >
+                <CardContent className="flex justify-between items-center">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-bold text-base">
+                        {session.courseName.split("-")[0]}
+                      </p>
+                      <Badge
+                        variant={getStatusBadgeVariant(session.status)}
+                        className={cn(
+                          "text-xs",
+                          session.status === "PRESENT" &&
+                            "bg-green-50 text-green-700 border-green-300",
+                          session.status === "ABSENT" &&
+                            "bg-red-50 text-red-700 border-red-300",
+                          session.status === "SCHEDULED" &&
+                            "bg-blue-50 text-blue-700 border-blue-300",
+                          session.status === "LEAVE" &&
+                            "bg-orange-50 text-orange-700 border-orange-300"
+                        )}
+                      >
+                        {getStatusLabel(session.status)}
+                      </Badge>
+                    </div>
+                    <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
                       <span>{session.date}</span>
-                      <span>|</span>
-                      <span>
-                        {session.startTime} - {session.endTime}
-                      </span>
+                      <span>{session.time}</span>
                     </div>
                   </div>
-                  <div className="text-xs font-bold px-2 py-1 bg-white/50 rounded-lg backdrop-blur-sm">
-                    {session.displayStatus === "SCHEDULED"
-                      ? "未上"
-                      : session.displayStatus === "PRESENT"
-                      ? "已上"
-                      : session.displayStatus === "ABSENT"
-                      ? "缺席"
-                      : session.displayStatus === "LEAVE"
-                      ? "請假"
-                      : session.displayStatus}
-                  </div>
+                  {/* Leave Button for SCHEDULED sessions */}
+                  {session.status === "SCHEDULED" && (
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => handleLeaveClick(session)}
+                    >
+                      請假
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+        </div>
+
+        {/* Calendar Section */}
+        <Card className="shadow-sm">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CalendarDays className="w-4 h-4" /> 課程日曆
+            </CardTitle>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() =>
+                  setSelectedDate(
+                    new Date(selectedDate.setMonth(selectedDate.getMonth() - 1))
+                  )
+                }
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm font-medium flex items-center">
+                {selectedDate.getFullYear()} / {selectedDate.getMonth() + 1}
+              </span>
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() =>
+                  setSelectedDate(
+                    new Date(selectedDate.setMonth(selectedDate.getMonth() + 1))
+                  )
+                }
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {/* Legend */}
+            <div className="flex gap-3 text-xs mb-4 flex-wrap justify-center">
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-green-500"></span> 已上
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-blue-500"></span> 未上
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-orange-500"></span>{" "}
+                請假
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="w-2 h-2 rounded-full bg-red-500"></span> 缺席
+              </div>
+            </div>
+
+            <div className="grid grid-cols-7 gap-1 text-center mb-2">
+              {["一", "二", "三", "四", "五", "六", "日"].map((d) => (
+                <div
+                  key={d}
+                  className="text-xs text-muted-foreground font-medium"
+                >
+                  {d}
                 </div>
               ))}
             </div>
-          )}
-        </section>
+            <div className="grid grid-cols-7 gap-1">
+              {Array.from({
+                length: firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1,
+              }).map((_, i) => (
+                <div key={`empty-${i}`} />
+              ))}
+              {daysInMonth.map((date) => {
+                const session = getSessionForDate(date);
+                const isToday =
+                  new Date().toDateString() === date.toDateString();
 
-        {/* Course Calendar */}
-        <section className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100">
-          {/* ... (Header unchanged) */}
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="font-bold text-gray-800">課程日曆</h3>
-            <div className="flex gap-2">
-              <button
-                onClick={() => handleMonthChange(-1)}
-                className="p-1 hover:bg-gray-100 rounded text-gray-500"
-              >
-                ←
-              </button>
-              <span className="text-gray-700 font-medium">
-                {currentMonth.toLocaleDateString("en-US", {
-                  month: "short",
-                  year: "numeric",
-                })}
-              </span>
-              <button
-                onClick={() => handleMonthChange(1)}
-                className="p-1 hover:bg-gray-100 rounded text-gray-500"
-              >
-                →
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-7 gap-1 text-center mb-2">
-            {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-              <div key={d} className="text-xs text-gray-400 font-medium py-1">
-                {d}
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 gap-1">
-            {/* Padding */}
-            {Array.from({ length: daysInMonth[0].getDay() }).map((_, i) => (
-              <div key={`pad-${i}`} className="aspect-square"></div>
-            ))}
-
-            {daysInMonth.map((date) => {
-              const dateStr = date.toISOString().split("T")[0];
-              const events = filledSessions.filter((e) => e.date === dateStr);
-              const primaryEvent = events[0];
-              const hasMultiple = events.length > 1;
-
-              return (
-                <div
-                  key={dateStr}
-                  onClick={() =>
-                    primaryEvent && handleSessionClick(primaryEvent)
-                  }
-                  className="aspect-square flex flex-col items-center justify-center relative hover:bg-gray-50 rounded-lg cursor-pointer transition-colors"
-                >
-                  <span
-                    className={`text-sm ${
-                      date.toDateString() === new Date().toDateString()
-                        ? "bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center"
-                        : "text-gray-700"
-                    }`}
+                return (
+                  <div
+                    key={date.toISOString()}
+                    className={cn(
+                      "aspect-square flex flex-col items-center justify-center rounded-lg text-sm relative transition-colors",
+                      isToday ? "bg-accent/50 font-bold" : "hover:bg-gray-50"
+                    )}
                   >
-                    {date.getDate()}
-                  </span>
-
-                  {primaryEvent && (
-                    <div className="mt-1 flex gap-0.5">
-                      {/* Status Dots */}
-                      {primaryEvent.displayStatus === "PRESENT" && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-green-500"></div>
+                    <span>{date.getDate()}</span>
+                    <span
+                      className={cn(
+                        "w-1.5 h-1.5 rounded-full mt-1",
+                        getStatusColor(session?.status)
                       )}
-                      {primaryEvent.displayStatus === "ABSENT" && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-red-500"></div>
-                      )}
-                      {primaryEvent.displayStatus === "LEAVE" && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-orange-500"></div>
-                      )}
-                      {primaryEvent.displayStatus === "SCHEDULED" && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
-                      )}
-
-                      {/* Multiple indicator */}
-                      {hasMultiple && (
-                        <div className="w-1.5 h-1.5 rounded-full bg-gray-300"></div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex gap-3 justify-center mt-4 text-xs text-gray-500 flex-wrap">
-            {/* ... */}
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-green-500"></div>已上
+                    />
+                  </div>
+                );
+              })}
             </div>
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-blue-500"></div>未上
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-orange-500"></div>請假
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-red-500"></div>缺席
-            </div>
-          </div>
-        </section>
+          </CardContent>
+        </Card>
 
-        {/* Actions */}
-        <div className="text-center">
-          <a
-            href="https://line.me/R/ti/p/@example"
-            className="inline-flex items-center justify-center w-full px-6 py-3 border border-gray-300 shadow-sm text-base font-medium rounded-xl text-gray-700 bg-white hover:bg-gray-50"
+        {/* Contact Support */}
+        <div className="flex justify-center mt-8">
+          <Button
+            variant="outline"
+            className="w-full gap-2 text-primary border-primary hover:bg-primary/5"
           >
-            聯繫客服
-          </a>
+            <MessageCircle size={16} /> 聯繫客服
+          </Button>
         </div>
-      </main>
+      </div>
 
-      {/* Leave Modal */}
-      <LeaveModal
-        isOpen={isLeaveModalOpen}
-        onClose={() => setIsLeaveModalOpen(false)}
-        onConfirm={handleConfirmLeave}
-        sessionDate={selectedLeaveSession?.date || "-"}
-        sessionTime={`${selectedLeaveSession?.startTime} - ${selectedLeaveSession?.endTime}`}
-        className={selectedLeaveSession?.className || "-"}
-      />
+      {isLeaveModalOpen && selectedSession && (
+        <LeaveModal
+          isOpen={isLeaveModalOpen}
+          onClose={() => setIsLeaveModalOpen(false)}
+          onConfirm={confirmLeave}
+          session={{
+            id: selectedSession.id,
+            date: selectedSession.date,
+            time: selectedSession.time,
+            courseName: selectedSession.courseName,
+            status: selectedSession.status as any, // Cast to AttendanceStatus for compatibility or refactor LeaveModal
+            credits: 0, // Mock val
+          }}
+        />
+      )}
     </div>
   );
 }

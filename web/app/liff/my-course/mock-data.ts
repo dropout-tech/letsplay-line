@@ -12,6 +12,7 @@ export interface Student {
     birthday: string;
     level: string;
     phone: string;
+    membership_tier: 'DIAMOND' | 'GOLD' | 'SILVER' | 'NONE';
 }
 
 export interface Enrollment {
@@ -64,6 +65,7 @@ export const mockStudents: Student[] = [
         birthday: '2015-05-20',
         level: 'Intermediate',
         phone: '0912-345-678',
+        membership_tier: 'GOLD',
     },
     {
         id: 'student_2',
@@ -72,6 +74,7 @@ export const mockStudents: Student[] = [
         birthday: '2018-08-15',
         level: 'Beginner',
         phone: '0912-345-678',
+        membership_tier: 'NONE',
     },
 ];
 
@@ -130,7 +133,7 @@ export const mockSessions: Session[] = [
     {
         id: 's2',
         classId: 'afterclass_2025_mon_1',
-        date: `${year}-${monthStr}-08`,
+        date: '2025-12-08',
         startTime: '13:30',
         endTime: '16:30',
         coach: 'Coach Chen',
@@ -139,7 +142,7 @@ export const mockSessions: Session[] = [
     {
         id: 's3',
         classId: 'afterclass_2025_mon_1',
-        date: `${year}-${monthStr}-15`,
+        date: '2025-12-15',
         startTime: '13:30',
         endTime: '16:30',
         coach: 'Coach Chen',
@@ -150,7 +153,7 @@ export const mockSessions: Session[] = [
     {
         id: 's4',
         classId: 'preschool_sat_A',
-        date: `${year}-${monthStr}-06`,
+        date: '2025-12-06',
         startTime: '09:00',
         endTime: '10:30',
         coach: 'Coach Lin',
@@ -159,7 +162,7 @@ export const mockSessions: Session[] = [
     {
         id: 's5',
         classId: 'preschool_sat_A',
-        date: `${year}-${monthStr}-13`,
+        date: '2025-12-13',
         startTime: '09:00',
         endTime: '10:30',
         coach: 'Coach Lin',
@@ -170,7 +173,7 @@ export const mockSessions: Session[] = [
     {
         id: 's6',
         classId: 'camp_2026_winter_1_morning',
-        date: `2026-01-26`,
+        date: '2026-01-26',
         startTime: '08:30',
         endTime: '11:30',
         coach: 'Coach Wang',
@@ -179,7 +182,7 @@ export const mockSessions: Session[] = [
     {
         id: 's7',
         classId: 'camp_2026_winter_1_morning',
-        date: `2026-01-27`,
+        date: '2026-01-27',
         startTime: '08:30',
         endTime: '11:30',
         coach: 'Coach Wang',
