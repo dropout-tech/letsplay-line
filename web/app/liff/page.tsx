@@ -10,7 +10,9 @@ export default function Home() {
       <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 dark:border-white mx-auto mb-4"></div>
-          <p className="text-lg text-zinc-600 dark:text-zinc-400">Initializing LIFF...</p>
+          <p className="text-lg text-zinc-600 dark:text-zinc-400">
+            Initializing LIFF...
+          </p>
         </div>
       </div>
     );
@@ -23,7 +25,7 @@ export default function Home() {
           <h1 className="text-4xl font-bold text-black dark:text-zinc-50">
             LIFF Chatbot
           </h1>
-          
+
           {liff && (
             <div className="space-y-4">
               <div className="p-4 bg-green-100 dark:bg-green-900 rounded-lg">
@@ -31,9 +33,11 @@ export default function Home() {
                   ✅ LIFF init succeeded!
                 </p>
               </div>
-              
+
               <div className="space-y-2 text-left bg-gray-100 dark:bg-gray-800 p-4 rounded-lg">
-                <h3 className="font-semibold text-black dark:text-white mb-2">LIFF Info:</h3>
+                <h3 className="font-semibold text-black dark:text-white mb-2">
+                  LIFF Info:
+                </h3>
                 <p className="text-sm text-gray-700 dark:text-gray-300">
                   <strong>OS:</strong> {liff.getOS()}
                 </p>
@@ -44,7 +48,8 @@ export default function Home() {
                   <strong>Version:</strong> {liff.getVersion()}
                 </p>
                 <p className="text-sm text-gray-700 dark:text-gray-300">
-                  <strong>Is in Client:</strong> {liff.isInClient() ? "Yes" : "No"}
+                  <strong>Is in Client:</strong>{" "}
+                  {liff.isInClient() ? "Yes" : "No"}
                 </p>
                 <p className="text-sm text-gray-700 dark:text-gray-300">
                   <strong>Is Login:</strong> {liff.isLoggedIn() ? "Yes" : "No"}
