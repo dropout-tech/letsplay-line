@@ -9,6 +9,7 @@ export interface Student {
     id: string;
     userId: string;
     name: string;
+    gender: 'MALE' | 'FEMALE' | 'OTHER';
     birthday: string;
     level: string;
     phone: string;
@@ -62,6 +63,7 @@ export const mockStudents: Student[] = [
         id: 'student_1',
         userId: 'U12345678',
         name: '王小明 (Bob)',
+        gender: 'MALE',
         birthday: '2015-05-20',
         level: 'Intermediate',
         phone: '0912-345-678',
@@ -71,6 +73,7 @@ export const mockStudents: Student[] = [
         id: 'student_2',
         userId: 'U12345678',
         name: '王小美 (Cathy)',
+        gender: 'FEMALE',
         birthday: '2018-08-15',
         level: 'Beginner',
         phone: '0912-345-678',
