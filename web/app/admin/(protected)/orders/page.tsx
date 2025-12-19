@@ -9,6 +9,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { getBaseUrl } from "@/lib/server/base-url";
 import { cn } from "@/lib/utils";
 import type { OrderStatus } from "@/server/repos/orders-repo";
 import type { AdminOrderListItem } from "@/server/services/admin/orders";
@@ -111,19 +112,6 @@ const fetchAdminOrders = async (
   }
 
   return body?.data ?? [];
-};
-
-const getBaseUrl = (): string => {
-  const envUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
-
-  if (envUrl) {
-    return envUrl.startsWith("http") ? envUrl : `https://${envUrl}`;
-  }
-
-  return "http://localhost:3000";
 };
 
 const StatusFilters = ({ currentStatus }: { currentStatus: FilterValue }) => (

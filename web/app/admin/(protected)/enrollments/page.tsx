@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { getBaseUrl } from "@/lib/server/base-url";
 import { cn } from "@/lib/utils";
 import type { EnrollmentStatus } from "@/server/repos/enrollments-repo";
 import type { AdminEnrollmentListItem } from "@/server/services/admin/enrollments";
@@ -110,19 +111,6 @@ const fetchAdminEnrollments = async (
 
   const body = await response.json();
   return body.data ?? [];
-};
-
-const getBaseUrl = (): string => {
-  const envUrl =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    process.env.APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
-
-  if (envUrl) {
-    return envUrl.startsWith("http") ? envUrl : `https://${envUrl}`;
-  }
-
-  return "http://localhost:3000";
 };
 
 const EnrollmentsTable = ({ data }: { data: AdminEnrollmentListItem[] }) => {
