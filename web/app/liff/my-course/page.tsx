@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,16 +15,41 @@ import {
   ChartColumn,
   MapPin,
 } from "lucide-react";
-import {
-  mockStudents,
-  mockEnrollments,
-  mockSessions,
-  mockAttendance,
-  AttendanceStatus,
-  Session,
-} from "./mock-data";
 import { LeaveModal } from "./components/leave-modal";
 import { cn } from "@/lib/utils";
+import { useLiff } from "../providers/liff-provider";
+import type { StudentRecord } from "@/server/repos/students-repo";
+
+type AttendanceStatus = "PRESENT" | "ABSENT" | "LEAVE" | "UNRECORDED";
+
+type EnrollmentSummary = {
+  id: string;
+  student_id: string;
+  class_id: string;
+  class_name: string;
+  total_credits: number;
+  remaining_credits: number;
+  attended_credits: number;
+  expiry_date: string | null;
+  status: string;
+};
+
+type AttendanceItem = {
+  id: string;
+  student_id: string;
+  session_id: string;
+  status: AttendanceStatus;
+  credits_used: number;
+  session: {
+    id: string;
+    class_id: string;
+    class_name: string;
+    start_time: string;
+    end_time: string;
+    status: "SCHEDULED" | "COMPLETED" | "CANCELLED";
+    branch_id: string | null;
+  };
+};
 
 // Adapter types for UI
 interface UIStats {
@@ -44,8 +69,22 @@ interface UIAttendance {
 }
 
 export default function MyCoursePage() {
-  const [currentStudentId, setCurrentStudentId] = useState(mockStudents[0].id);
+  const { profile, isLoading: liffLoading } = useLiff();
+  const devUserId = process.env.NEXT_PUBLIC_DEV_LIFF_USER_ID;
+  const resolvedLineUserId = profile?.userId ?? devUserId ?? null;
+
+  const [students, setStudents] = useState<StudentRecord[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(true);
+  const [studentsError, setStudentsError] = useState<string | null>(null);
+  const [currentStudentId, setCurrentStudentId] = useState<string | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date());
+
+  const [enrollments, setEnrollments] = useState<EnrollmentSummary[]>([]);
+  const [enrollmentsLoading, setEnrollmentsLoading] = useState(false);
+  const [enrollmentsError, setEnrollmentsError] = useState<string | null>(null);
+  const [attendanceItems, setAttendanceItems] = useState<AttendanceItem[]>([]);
+  const [attendanceLoading, setAttendanceLoading] = useState(false);
+  const [attendanceError, setAttendanceError] = useState<string | null>(null);
 
   // Leave Modal State
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
@@ -53,70 +92,273 @@ export default function MyCoursePage() {
     null
   );
 
-  // Derived Data
-  const student =
-    mockStudents.find((s) => s.id === currentStudentId) || mockStudents[0];
+  const attendanceRange = useMemo(() => {
+    const now = new Date();
+    const fromDate = new Date(now);
+    fromDate.setMonth(fromDate.getMonth() - 6);
+    fromDate.setDate(1);
+    fromDate.setHours(0, 0, 0, 0);
 
-  // 1. Derive Stats from Enrollments
-  const stats: UIStats[] = mockEnrollments
-    .filter((e) => e.studentId === currentStudentId)
-    .map((e) => ({
-      courseName: e.className,
-      attended: e.attendedCredits,
-      remaining: e.remainingCredits,
-      total: e.totalCredits,
-      expiryDate: e.expiryDate,
-    }));
-
-  // 2. Derive Calendar Sessions
-  // Get all class IDs for this student
-  const studentClassIds = mockEnrollments
-    .filter((e) => e.studentId === currentStudentId)
-    .map((e) => e.classId);
-
-  // Find all sessions for these classes
-  const relevantSessions = mockSessions.filter((s) =>
-    studentClassIds.includes(s.classId)
-  );
-
-  // Merge with Attendance records
-  const attendanceList: UIAttendance[] = relevantSessions.map((session) => {
-    const attendanceRecord = mockAttendance.find(
-      (a) => a.sessionId === session.id && a.studentId === currentStudentId
+    const futureAnchor = new Date(now);
+    futureAnchor.setMonth(futureAnchor.getMonth() + 6);
+    const toDate = new Date(
+      futureAnchor.getFullYear(),
+      futureAnchor.getMonth() + 1,
+      0
     );
-
-    // Determine status:
-    // If attendance record exists, use that status (PRESENT, ABSENT, LEAVE)
-    // If not, check session status (SCHEDULED, COMPLETED)
-    // Or check if it's in the past/future
-    let status: any = attendanceRecord
-      ? attendanceRecord.status
-      : session.status;
-
-    // Override 'COMPLETED' with 'ABSENT' or 'UNRECORDED' if no attendance record exists?
-    // Spec says: "Course Calendar... Present(Green), Absent(Red), Scheduled(Blue), Leave(Orange)"
-    if (!attendanceRecord && session.status === "COMPLETED") {
-      // If it's completed but no record, maybe it implies Absent or just hasn't been input yet?
-      // For now, let's leave it as COMPLETED or map to SCHEDULED logic for simplicity if date is future
-      const sessionDate = new Date(session.date);
-      const today = new Date();
-      if (sessionDate < today) {
-        status = "ABSENT"; // Assume absent if completed and no record
-      } else {
-        status = "SCHEDULED";
-      }
-    }
+    toDate.setHours(23, 59, 59, 999);
 
     return {
-      id: session.id,
-      date: session.date,
-      time: `${session.startTime}-${session.endTime}`,
-      courseName:
-        mockEnrollments.find((e) => e.classId === session.classId)?.className ||
-        "Unknown Class",
-      status: status,
+      from: formatDateParam(fromDate),
+      to: formatDateParam(toDate),
     };
-  });
+  }, []);
+
+  // Load students for the authenticated LIFF user
+  useEffect(() => {
+    if (!resolvedLineUserId) {
+      if (!liffLoading) {
+        setStudentsLoading(false);
+        setStudentsError("請先登入 LINE 以查看學生資料");
+      }
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadStudents = async () => {
+      setStudentsLoading(true);
+      setStudentsError(null);
+
+      try {
+        const response = await fetch("/api/liff/students", {
+          headers: {
+            "X-Line-User-Id": resolvedLineUserId,
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          let message = "載入學生資料失敗";
+          try {
+            const body = await response.json();
+            message = body.error ?? message;
+          } catch (parseError) {
+            console.error("Failed to parse students response", parseError);
+          }
+          throw new Error(message);
+        }
+
+        const body = await response.json();
+        setStudents(body.data ?? []);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.error("Failed to load students", error);
+        setStudents([]);
+        setStudentsError(
+          error instanceof Error ? error.message : "載入學生資料失敗"
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setStudentsLoading(false);
+        }
+      }
+    };
+
+    loadStudents();
+
+    return () => controller.abort();
+  }, [resolvedLineUserId, liffLoading]);
+
+  // Ensure the selected student stays in sync with loaded data
+  useEffect(() => {
+    if (!students.length) {
+      setCurrentStudentId(null);
+      return;
+    }
+
+    setCurrentStudentId((prev) => {
+      if (prev && students.some((student) => student.id === prev)) {
+        return prev;
+      }
+      return students[0].id;
+    });
+  }, [students]);
+
+  useEffect(() => {
+    if (!currentStudentId) {
+      setEnrollments([]);
+      setEnrollmentsError(null);
+      return;
+    }
+
+    if (!resolvedLineUserId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadEnrollments = async () => {
+      setEnrollmentsLoading(true);
+      setEnrollmentsError(null);
+
+      try {
+        const params = new URLSearchParams({ student_id: currentStudentId });
+        const response = await fetch(
+          `/api/liff/enrollments?${params.toString()}`,
+          {
+            headers: {
+              "X-Line-User-Id": resolvedLineUserId,
+            },
+            signal: controller.signal,
+          }
+        );
+
+        if (!response.ok) {
+          let message = "載入課程資訊失敗";
+          try {
+            const body = await response.json();
+            message = body.error ?? message;
+          } catch (parseError) {
+            console.error("Failed to parse enrollments response", parseError);
+          }
+          throw new Error(message);
+        }
+
+        const body = await response.json();
+        setEnrollments(body.data ?? []);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+        console.error("Failed to load enrollments", error);
+        setEnrollments([]);
+        setEnrollmentsError(
+          error instanceof Error ? error.message : "載入課程資訊失敗"
+        );
+      } finally {
+        if (!controller.signal.aborted) {
+          setEnrollmentsLoading(false);
+        }
+      }
+    };
+
+    loadEnrollments();
+
+    return () => controller.abort();
+  }, [currentStudentId, resolvedLineUserId]);
+
+  useEffect(() => {
+    if (!currentStudentId) {
+      setAttendanceItems([]);
+      setAttendanceError(null);
+      return;
+    }
+
+    if (!resolvedLineUserId) {
+      return;
+    }
+
+    const controller = new AbortController();
+
+    const loadAttendance = async (signal?: AbortSignal) => {
+      setAttendanceLoading(true);
+      setAttendanceError(null);
+
+      try {
+        const params = new URLSearchParams({
+          student_id: currentStudentId!,
+        });
+        if (attendanceRange.from) {
+          params.set("from", attendanceRange.from);
+        }
+        if (attendanceRange.to) {
+          params.set("to", attendanceRange.to);
+        }
+
+        const response = await fetch(
+          `/api/liff/attendance?${params.toString()}`,
+          {
+            headers: {
+              "X-Line-User-Id": resolvedLineUserId!,
+            },
+            signal,
+          }
+        );
+
+        if (!response.ok) {
+          let message = "載入出席紀錄失敗";
+          try {
+            const body = await response.json();
+            message = body.error ?? message;
+          } catch (parseError) {
+            console.error("Failed to parse attendance response", parseError);
+          }
+          throw new Error(message);
+        }
+
+        const body = await response.json();
+        setAttendanceItems(body.data ?? []);
+      } catch (error) {
+        if (signal?.aborted) {
+          return;
+        }
+        console.error("Failed to load attendance", error);
+        setAttendanceItems([]);
+        setAttendanceError(
+          error instanceof Error ? error.message : "載入出席紀錄失敗"
+        );
+      } finally {
+        if (!signal?.aborted) {
+          setAttendanceLoading(false);
+        }
+      }
+    };
+
+    loadAttendance(controller.signal);
+
+    return () => controller.abort();
+  }, [attendanceRange, currentStudentId, resolvedLineUserId]);
+
+  // 1. Derive Stats from Enrollments
+  const stats: UIStats[] = enrollments.map((enrollment) => ({
+    courseName: enrollment.class_name,
+    attended: enrollment.attended_credits,
+    remaining: enrollment.remaining_credits,
+    total: enrollment.total_credits,
+    expiryDate: enrollment.expiry_date ?? "未設定",
+  }));
+
+  // 2. Map attendance rows to UI format
+  const attendanceList: UIAttendance[] = attendanceItems.map((item) => ({
+    id: item.session_id,
+    date: toDateLabel(item.session.start_time),
+    time: formatTimeRange(item.session.start_time, item.session.end_time),
+    courseName: item.session.class_name,
+    status: deriveUiStatus(item),
+  }));
+
+  const weeklySessions = attendanceList
+    .filter((s) => {
+      const sDate = new Date(s.date);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const dayOfWeek = today.getDay();
+
+      const diffToMon = (dayOfWeek + 6) % 7;
+      const thisMon = new Date(today);
+      thisMon.setDate(today.getDate() - diffToMon);
+
+      const nextSun = new Date(thisMon);
+      nextSun.setDate(thisMon.getDate() + 13);
+      nextSun.setHours(23, 59, 59, 999);
+
+      return sDate >= thisMon && sDate <= nextSun;
+    })
+    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
   // Handlers
   const handleLeaveClick = (session: UIAttendance) => {
@@ -124,11 +366,63 @@ export default function MyCoursePage() {
     setIsLeaveModalOpen(true);
   };
 
-  const confirmLeave = () => {
-    if (selectedSession) {
-      alert(`Leave application submitted for ${selectedSession.date}`);
+  const confirmLeave = async () => {
+    if (!selectedSession || !currentStudentId || !resolvedLineUserId) return;
+
+    try {
+      const response = await fetch("/api/liff/attendance/leave", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Line-User-Id": resolvedLineUserId,
+        },
+        body: JSON.stringify({
+          student_id: currentStudentId,
+          session_id: selectedSession.id,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = "請假申請失敗";
+        try {
+          const body = await response.json();
+          message = body.error ?? message;
+        } catch (e) {}
+        throw new Error(message);
+      }
+
+      alert("請假申請已提交");
       setIsLeaveModalOpen(false);
       setSelectedSession(null);
+
+      // Refresh attendance items
+      const params = new URLSearchParams({
+        student_id: currentStudentId,
+      });
+      if (attendanceRange.from) {
+        params.set("from", attendanceRange.from);
+      }
+      if (attendanceRange.to) {
+        params.set("to", attendanceRange.to);
+      }
+
+      const refreshRes = await fetch(
+        `/api/liff/attendance?${params.toString()}`,
+        {
+          headers: {
+            "X-Line-User-Id": resolvedLineUserId,
+          },
+        }
+      );
+      if (refreshRes.ok) {
+        const body = await refreshRes.json();
+        setAttendanceItems(body.data ?? []);
+      }
+    } catch (error) {
+      console.error("Failed to submit leave", error);
+      alert(
+        error instanceof Error ? error.message : "請假申請失敗，請稍後再試"
+      );
     }
   };
 
@@ -147,13 +441,13 @@ export default function MyCoursePage() {
     1
   ).getDay();
 
-  // Helper to get session for a specific date
-  const getSessionForDate = (date: Date) => {
+  // Helper to get sessions for a specific date (multiple sessions possible per day)
+  const getSessionsForDate = (date: Date) => {
     const year = date.getFullYear();
     const month = (date.getMonth() + 1).toString().padStart(2, "0");
     const day = date.getDate().toString().padStart(2, "0");
     const dateStr = `${year}-${month}-${day}`;
-    return attendanceList.find((a) => a.date === dateStr);
+    return attendanceList.filter((a) => a.date === dateStr);
   };
 
   const getStatusColor = (status: string | undefined) => {
@@ -200,8 +494,9 @@ export default function MyCoursePage() {
   };
 
   // Helper functions for localization
-  const getMembershipLabel = (tier: string) => {
-    switch (tier) {
+  const getMembershipLabel = (tier?: string | null) => {
+    const normalized = (tier ?? "NONE").toUpperCase();
+    switch (normalized) {
       case "DIAMOND":
         return "鑽石會員";
       case "GOLD":
@@ -230,22 +525,25 @@ export default function MyCoursePage() {
     }
   };
 
-  const getLevelLabel = (level: string) => {
-    // ... existing code ...
-    switch (level) {
-      case "Beginner":
+  const getLevelLabel = (level?: string | null) => {
+    if (!level) {
+      return "未設定";
+    }
+    switch (level.toUpperCase()) {
+      case "BEGINNER":
         return "初學";
-      case "Intermediate":
+      case "INTERMEDIATE":
         return "中階";
-      case "Advanced":
+      case "ADVANCED":
         return "進階";
       default:
         return level;
     }
   };
 
-  const getMembershipColor = (tier: string) => {
-    switch (tier) {
+  const getMembershipColor = (tier?: string | null) => {
+    const normalized = (tier ?? "NONE").toUpperCase();
+    switch (normalized) {
       case "DIAMOND":
         return "bg-cyan-500 hover:bg-cyan-600";
       case "GOLD":
@@ -257,13 +555,57 @@ export default function MyCoursePage() {
     }
   };
 
+  if (studentsLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <p className="text-sm text-muted-foreground">載入學生資料中...</p>
+      </div>
+    );
+  }
+
+  if (studentsError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full shadow-sm">
+          <CardContent className="p-6 text-center space-y-3">
+            <p className="text-base font-semibold text-red-600">
+              無法載入學生資料
+            </p>
+            <p className="text-sm text-muted-foreground">{studentsError}</p>
+            <Button onClick={() => window.location.reload()} className="w-full">
+              重新整理
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!students.length) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full shadow-sm">
+          <CardContent className="p-6 text-center space-y-2">
+            <p className="text-base font-semibold">尚未有學生資料</p>
+            <p className="text-sm text-muted-foreground">
+              請先於 LIFF 填寫學生資訊後再回到此頁面。
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const student =
+    students.find((s) => s.id === currentStudentId) ?? students[0]!;
+
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
       {/* Header */}
-      <div className="bg-white p-4 sticky top-0 z-10 shadow-sm flex flex-col gap-3">
+      <div className="bg-white p-4 sticky top-0 z-10 shadow-sm flex justify-between gap-3">
         <h1 className="text-xl font-bold">我的課程</h1>
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {mockStudents.map((s) => (
+          {students.map((s) => (
             <button
               key={s.id}
               onClick={() => setCurrentStudentId(s.id)}
@@ -316,41 +658,63 @@ export default function MyCoursePage() {
           <h3 className="text-lg font-bold flex items-center gap-2">
             <ChartColumn className="w-5 h-5" /> 堂數統計
           </h3>
-          {stats.map((stat, idx) => (
-            <Card key={idx} className="shadow-sm">
-              <CardHeader>
-                <CardTitle className="text-base">{stat.courseName}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex justify-between text-center items-center">
-                  <div className="flex-1">
-                    <p className="text-3xl font-bold text-green-600">
-                      {stat.attended}
-                    </p>
-                    <p className="text-xs text-muted-foreground">已上</p>
-                  </div>
-                  <Separator orientation="vertical" className="h-10" />
-                  <div className="flex-1">
-                    <p className="text-3xl font-bold text-blue-600">
-                      {stat.remaining}
-                    </p>
-                    <p className="text-xs text-muted-foreground">剩餘</p>
-                  </div>
-                  <Separator orientation="vertical" className="h-10" />
-                  <div className="flex-1">
-                    <p className="text-3xl font-bold text-gray-500">
-                      {stat.total}
-                    </p>
-                    <p className="text-xs text-muted-foreground">總堂數</p>
-                  </div>
-                </div>
-
-                <div className="text-xs text-muted-foreground font-normal mt-3 text-right">
-                  使用期限: {stat.expiryDate}
-                </div>
+          {enrollmentsLoading && (
+            <Card className="shadow-sm">
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                載入課程統計中...
               </CardContent>
             </Card>
-          ))}
+          )}
+          {enrollmentsError && !enrollmentsLoading && (
+            <Card className="shadow-sm">
+              <CardContent className="py-6 text-center text-sm text-red-600">
+                {enrollmentsError}
+              </CardContent>
+            </Card>
+          )}
+          {!enrollmentsLoading && !enrollmentsError && stats.length === 0 && (
+            <Card className="shadow-sm">
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                尚未有任何課程資料
+              </CardContent>
+            </Card>
+          )}
+          {!enrollmentsLoading &&
+            !enrollmentsError &&
+            stats.map((stat, idx) => (
+              <Card key={idx} className="shadow-sm">
+                <CardHeader>
+                  <CardTitle className="text-base">{stat.courseName}</CardTitle>
+                  <div className="text-xs text-muted-foreground font-normal mb-2">
+                    使用期限: {stat.expiryDate}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex justify-between text-center items-center">
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">已上</p>
+                      <p className="text-xl font-bold text-green-600">
+                        {stat.attended}
+                      </p>
+                    </div>
+                    <Separator orientation="vertical" className="h-10" />
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">剩餘</p>
+                      <p className="text-xl font-bold text-blue-600">
+                        {stat.remaining}
+                      </p>
+                    </div>
+                    <Separator orientation="vertical" className="h-10" />
+                    <div className="flex-1">
+                      <p className="text-xs text-muted-foreground">總堂數</p>
+                      <p className="text-xl font-bold text-gray-500">
+                        {stat.total}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
         </div>
 
         {/* Agenda Section */}
@@ -358,31 +722,32 @@ export default function MyCoursePage() {
           <h3 className="text-lg font-bold flex items-center gap-2">
             <Clock className="w-5 h-5" /> 近期課程
           </h3>
-          {/* Filter sessions for This Week Mon to Next Week Sun */}
-          {attendanceList
-            .filter((s) => {
-              const sDate = new Date(s.date);
-
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const dayOfWeek = today.getDay(); // 0(Sun) - 6(Sat)
-
-              // Calculate this week's Monday
-              const diffToMon = (dayOfWeek + 6) % 7;
-              const thisMon = new Date(today);
-              thisMon.setDate(today.getDate() - diffToMon);
-
-              // Calculate next week's Sunday (This Mon + 13 days)
-              const nextSun = new Date(thisMon);
-              nextSun.setDate(thisMon.getDate() + 13);
-              nextSun.setHours(23, 59, 59, 999);
-
-              return sDate >= thisMon && sDate <= nextSun;
-            })
-            .sort(
-              (a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()
-            )
-            .map((session) => (
+          {attendanceLoading && (
+            <Card className="shadow-sm">
+              <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                載入課程中...
+              </CardContent>
+            </Card>
+          )}
+          {attendanceError && !attendanceLoading && (
+            <Card className="shadow-sm">
+              <CardContent className="py-6 text-center text-sm text-red-600">
+                {attendanceError}
+              </CardContent>
+            </Card>
+          )}
+          {!attendanceLoading &&
+            !attendanceError &&
+            weeklySessions.length === 0 && (
+              <Card className="shadow-sm">
+                <CardContent className="py-6 text-center text-sm text-muted-foreground">
+                  這兩週沒有課程安排
+                </CardContent>
+              </Card>
+            )}
+          {!attendanceLoading &&
+            !attendanceError &&
+            weeklySessions.map((session) => (
               <Card
                 key={session.id}
                 className={cn(
@@ -393,38 +758,33 @@ export default function MyCoursePage() {
                 <CardContent className="flex justify-between items-center">
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <p className="font-bold text-base">
-                        {session.courseName.split("-")[0]}
+                      <p className="text-base font-bold">
+                        {session.courseName}
+                        <Badge
+                          variant={getStatusBadgeVariant(session.status)}
+                          className={cn(
+                            "text-xs ml-2",
+                            session.status === "PRESENT" &&
+                              "bg-green-50 text-green-700 border-green-300",
+                            session.status === "ABSENT" &&
+                              "bg-red-50 text-red-700 border-red-300",
+                            session.status === "SCHEDULED" &&
+                              "bg-blue-50 text-blue-700 border-blue-300",
+                            session.status === "LEAVE" &&
+                              "bg-orange-50 text-orange-700 border-orange-300"
+                          )}
+                        >
+                          {getStatusLabel(session.status)}
+                        </Badge>
                       </p>
-                      <Badge
-                        variant={getStatusBadgeVariant(session.status)}
-                        className={cn(
-                          "text-xs",
-                          session.status === "PRESENT" &&
-                            "bg-green-50 text-green-700 border-green-300",
-                          session.status === "ABSENT" &&
-                            "bg-red-50 text-red-700 border-red-300",
-                          session.status === "SCHEDULED" &&
-                            "bg-blue-50 text-blue-700 border-blue-300",
-                          session.status === "LEAVE" &&
-                            "bg-orange-50 text-orange-700 border-orange-300"
-                        )}
-                      >
-                        {getStatusLabel(session.status)}
-                      </Badge>
                     </div>
                     <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
                       <span>{session.date}</span>
                       <span>{session.time}</span>
                     </div>
                   </div>
-                  {/* Leave Button for SCHEDULED sessions */}
                   {session.status === "SCHEDULED" && (
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={() => handleLeaveClick(session)}
-                    >
+                    <Button size="sm" onClick={() => handleLeaveClick(session)}>
                       請假
                     </Button>
                   )}
@@ -504,7 +864,7 @@ export default function MyCoursePage() {
                 <div key={`empty-${i}`} />
               ))}
               {daysInMonth.map((date) => {
-                const session = getSessionForDate(date);
+                const sessions = getSessionsForDate(date);
                 const isToday =
                   new Date().toDateString() === date.toDateString();
 
@@ -517,12 +877,21 @@ export default function MyCoursePage() {
                     )}
                   >
                     <span>{date.getDate()}</span>
-                    <span
-                      className={cn(
-                        "w-1.5 h-1.5 rounded-full mt-1",
-                        getStatusColor(session?.status)
+                    <div className="flex flex-wrap items-center justify-center gap-0.5 mt-1 min-h-[0.4rem]">
+                      {sessions.length > 0 ? (
+                        sessions.map((session) => (
+                          <span
+                            key={session.id}
+                            className={cn(
+                              "w-1.5 h-1.5 rounded-full",
+                              getStatusColor(session.status)
+                            )}
+                          />
+                        ))
+                      ) : (
+                        <span className="w-1.5 h-1.5 rounded-full bg-gray-200/50" />
                       )}
-                    />
+                    </div>
                   </div>
                 );
               })}
@@ -551,11 +920,46 @@ export default function MyCoursePage() {
             date: selectedSession.date,
             time: selectedSession.time,
             courseName: selectedSession.courseName,
-            status: selectedSession.status as any, // Cast to AttendanceStatus for compatibility or refactor LeaveModal
-            credits: 0, // Mock val
           }}
         />
       )}
     </div>
   );
+}
+
+function formatDateParam(date: Date): string {
+  return date.toISOString().split("T")[0];
+}
+
+function toDateLabel(iso: string): string {
+  return iso?.split("T")[0] ?? "";
+}
+
+function formatTimeRange(startIso: string, endIso: string): string {
+  return `${formatTimeLabel(startIso)}-${formatTimeLabel(endIso)}`;
+}
+
+function formatTimeLabel(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function deriveUiStatus(item: AttendanceItem): UIAttendance["status"] {
+  if (
+    item.status === "PRESENT" ||
+    item.status === "ABSENT" ||
+    item.status === "LEAVE"
+  ) {
+    return item.status;
+  }
+  const sessionStart = Date.parse(item.session.start_time);
+  if (Number.isNaN(sessionStart)) {
+    return "SCHEDULED";
+  }
+  return sessionStart > Date.now() ? "SCHEDULED" : "COMPLETED";
 }

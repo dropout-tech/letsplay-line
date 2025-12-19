@@ -9,13 +9,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Attendance } from "../mock-data";
+
+export interface LeaveSession {
+  id: string;
+  date: string;
+  time: string;
+  courseName: string;
+}
 
 interface LeaveModalProps {
   isOpen: boolean;
   onClose: () => void;
   onConfirm: () => void;
-  session: Attendance | null;
+  session: LeaveSession | null;
 }
 
 export function LeaveModal({
@@ -30,31 +36,29 @@ export function LeaveModal({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Confirm Leave Application</DialogTitle>
-          <DialogDescription>
-            Are you sure you want to apply for leave for this session?
-          </DialogDescription>
+          <DialogTitle>確認請假</DialogTitle>
+          <DialogDescription>您確定要為此課程請假嗎？</DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-2 py-4">
           <div className="grid grid-cols-4 items-center gap-4">
-            <span className="font-bold text-right">Class:</span>
+            <span className="font-bold text-right">課程:</span>
             <span className="col-span-3">{session.courseName}</span>
           </div>
           <div className="grid grid-cols-4 items-center gap-4">
-            <span className="font-bold text-right">Date:</span>
+            <span className="font-bold text-right">日期:</span>
             <span className="col-span-3">{session.date}</span>
           </div>
           <div className="grid grid-cols-4 items-center gap-4">
-            <span className="font-bold text-right">Time:</span>
+            <span className="font-bold text-right">時間:</span>
             <span className="col-span-3">{session.time}</span>
           </div>
         </div>
         <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
+            取消
           </Button>
           <Button type="button" variant="destructive" onClick={onConfirm}>
-            Confirm Leave
+            確認請假
           </Button>
         </DialogFooter>
       </DialogContent>

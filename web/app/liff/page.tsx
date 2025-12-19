@@ -88,25 +88,6 @@ export default function Home() {
               </div>
             </div>
           )}
-
-          <div className="mt-8 space-y-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <a
-                href="/activity"
-                className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-center"
-              >
-                進入聊天室 💬
-              </a>
-              <a
-                href="https://developers.line.biz/ja/docs/liff/"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-6 py-3 border border-blue-600 text-blue-600 dark:text-blue-400 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900 transition-colors text-center"
-              >
-                LIFF 文檔
-              </a>
-            </div>
-          </div>
         </div>
       </main>
     </div>
