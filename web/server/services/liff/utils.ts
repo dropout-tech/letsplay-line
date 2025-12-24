@@ -15,13 +15,28 @@ export const readLiffProfileFromHeaders = (headers: Headers): LiffProfileHeaders
 
     const profile: LiffProfileHeaders = {};
     if (displayName && displayName.trim().length > 0) {
-        profile.displayName = displayName;
+        try {
+            profile.displayName = decodeURIComponent(displayName);
+        } catch {
+            // Fallback to original value if decoding fails
+            profile.displayName = displayName;
+        }
     }
     if (pictureUrl && pictureUrl.trim().length > 0) {
-        profile.pictureUrl = pictureUrl;
+        try {
+            profile.pictureUrl = decodeURIComponent(pictureUrl);
+        } catch {
+            // Fallback to original value if decoding fails
+            profile.pictureUrl = pictureUrl;
+        }
     }
     if (email && email.trim().length > 0) {
-        profile.email = email;
+        try {
+            profile.email = decodeURIComponent(email);
+        } catch {
+            // Fallback to original value if decoding fails
+            profile.email = email;
+        }
     }
 
     return profile;

@@ -109,13 +109,13 @@ export default function ProductPage({
   const profileHeaders = useMemo(() => {
     const headers: Record<string, string> = {};
     if (profile?.displayName) {
-      headers["X-Line-Display-Name"] = profile.displayName;
+      headers["X-Line-Display-Name"] = encodeURIComponent(profile.displayName);
     }
     if (profile?.pictureUrl) {
-      headers["X-Line-Picture"] = profile.pictureUrl;
+      headers["X-Line-Picture"] = encodeURIComponent(profile.pictureUrl);
     }
     if ((profile as any)?.email) {
-      headers["X-Line-Email"] = (profile as any).email;
+      headers["X-Line-Email"] = encodeURIComponent((profile as any).email);
     }
     return headers;
   }, [profile]);
