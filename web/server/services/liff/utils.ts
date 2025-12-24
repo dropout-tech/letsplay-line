@@ -10,12 +10,17 @@ const HEADER_EMAIL = "x-line-email";
 
 /**
  * Safely decode a URI component, returning the original value if decoding fails.
+ * This is useful for handling potentially malformed URI-encoded strings in HTTP headers.
+ * 
+ * @param value - The URI-encoded string to decode
+ * @returns The decoded string, or the original value if decoding fails
  */
 const safeDecodeURIComponent = (value: string): string => {
     try {
         return decodeURIComponent(value);
     } catch (error) {
         // Fallback to original value if decoding fails
+        // TODO: Consider using a structured logger for production
         console.warn("Failed to decode URI component:", error);
         return value;
     }
